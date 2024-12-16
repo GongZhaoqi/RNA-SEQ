@@ -201,7 +201,7 @@ mkdir -p ${OUTPUT_DIR}
 # === 运行 featureCounts ===
 echo "Starting featureCounts for gene expression quantification..."
 
-featureCounts -T ${THREADS} -a ${GTF_FILE} -o ${OUTPUT_DIR}/gene_counts.txt \
+featureCounts -T ${THREADS} -p -a ${GTF_FILE} -o ${OUTPUT_DIR}/gene_counts.txt \
     ${BAM_DIR}/*.sorted.bam
 
 echo "featureCounts completed! Results saved to: ${OUTPUT_DIR}/gene_counts.txt"
