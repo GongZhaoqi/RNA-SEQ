@@ -185,7 +185,7 @@ vim run_featureCounts.sh
 # === 配置部分 ===
 WORK_DIR="/media/sf_share/NS5"                      # 主目录
 BAM_DIR="${WORK_DIR}/processed"                    # 存放排序后的 BAM 文件目录
-GTF_FILE="/media/sf_share/index/gtf/GCF_000001405.38_GRCh38.p12_genomic.gtf.gz"  # 参考基因组的 GTF 文件路径
+GTF_FILE="/media/sf_share/index/gtf/gencode.v38.annotation.gtf.gz"  # 参考基因组的 GTF 文件路径
 OUTPUT_DIR="${WORK_DIR}/counts"                    # 输出目录
 THREADS=8                                          # 并行线程数
 CONDA_ENV="bioinformatics"                         # Conda 环境名称
