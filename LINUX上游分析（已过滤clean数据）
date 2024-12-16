@@ -1,0 +1,212 @@
+/media/sf_share/项目名称  
+├── raw_data/             # 存放你的 fq.gz 原始文件
+├── index/                # 存放参考基因组索引 (hg38)
+├── aligned/              # 输出比对的SAM/BAM文件
+└── scripts/              # 存放你的脚本
+
+# 环境检查
+vim setup_env.sh
+
+##——————vim编辑器内容——————
+#!/bin/bash
+
+# === 配置部分 ===
+CONDA_ENV="bioinformatics"             # Conda环境名称
+CONDA_BASE=$(conda info --base)        # Conda基础路径
+SOFTWARE_LIST=("hisat2" "samtools" "fastqc") # 需要检查的软件
+
+echo "=== 环境检查与设置 ==="
+
+# === Step 1: 检查 Conda 是否安装 ===
+if ! command -v conda &> /dev/null; then
+    echo "Error: Conda 未安装，请先安装 Miniconda 或 Anaconda！"
+    exit 1
+fi
+echo "Conda 已安装。"
+
+# === Step 2: 自动配置 Conda 国内镜像 ===
+echo "正在配置 Conda 国内镜像..."
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda/
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/
+conda config --set show_channel_urls yes
+echo "Conda 国内镜像配置完成！"
+
+# === Step 3: 激活或创建 Conda 环境 ===
+echo "检查并激活 Conda 环境: ${CONDA_ENV}"
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+if conda info --envs | grep -q "${CONDA_ENV}"; then
+    conda activate "${CONDA_ENV}"
+    echo "已激活环境：${CONDA_ENV}"
+else
+    echo "未找到环境 ${CONDA_ENV}，正在创建..."
+    conda create -n "${CONDA_ENV}" -y
+    conda activate "${CONDA_ENV}"
+    echo "环境 ${CONDA_ENV} 创建并激活成功！"
+fi
+
+# === Step 4: 检查并安装所需软件 ===
+echo "检查所需软件是否安装..."
+for software in "${SOFTWARE_LIST[@]}"; do
+    if ! command -v ${software} &> /dev/null; then
+        echo "未检测到 ${software}，正在安装..."
+        # 对 featureCounts 特殊处理，因为它属于 subread 包
+        if [[ "${software}" == "featureCounts" ]]; then
+            conda install -c bioconda subread -y
+        else
+            conda install -c bioconda ${software} -y
+        fi
+    else
+        echo "${software} 已安装，版本：$(${software} --version | head -n 1)"
+    fi
+done
+
+# === Step 5: 如果 Conda 安装失败，使用 APT 安装 featureCounts ===
+if ! command -v featureCounts &> /dev/null; then
+    echo "Conda 安装 featureCounts 失败，尝试使用 APT 安装..."
+    apt update
+    apt install -y subread
+    echo "featureCounts 已通过 APT 安装。"
+fi
+
+# === 最终检查 ===
+echo "=== 最终检查 ==="
+for software in "${SOFTWARE_LIST[@]}"; do
+    if command -v ${software} &> /dev/null; then
+        echo "${software} 已成功安装，路径：$(which ${software})"
+    else
+        echo "Error: ${software} 安装失败，请手动检查。"
+    fi
+done
+
+echo "环境检查与准备完成！"
+##——————vim编辑器内容结束——————
+chmod +x setup_env.sh
+bash setup_env.sh
+
+
+#aligned
+vim aligned.sh
+
+## ——————vim编辑器内容——————
+#!/bin/bash
+
+# === 环境准备 ===
+bash /path/to/setup_env.sh || { echo "环境准备失败，退出程序！"; exit 1; }
+
+# === 主分析部分 ===
+WORK_DIR="/media/sf_share/NS5"          # 主目录
+RAW_DATA_DIR="${WORK_DIR}/raw_data"    # 原始数据目录
+INDEX_DIR="/media/sf_share/index/hg38"          # 参考基因组索引目录
+OUTPUT_DIR="${WORK_DIR}/aligned"       # 比对输出目录
+THREADS=8                              # 并行线程数
+CONDA_ENV="bioinformatics"             # Conda环境名称
+
+mkdir -p ${OUTPUT_DIR}
+cd ${RAW_DATA_DIR}
+
+ls *_1.fq.gz | cut -d"_" -f1-3 | sort -u | while read id; do
+    echo "Processing sample: ${id}"
+
+    FQ1="${RAW_DATA_DIR}/${id}_1.fq.gz"
+    FQ2="${RAW_DATA_DIR}/${id}_2.fq.gz"
+
+    if [[ -f ${FQ1} && -f ${FQ2} ]]; then
+        echo "Running HISAT2 for ${id}..."
+        hisat2 -p ${THREADS} -x ${INDEX_DIR}/genome \
+               -1 ${FQ1} -2 ${FQ2} \
+               -S ${OUTPUT_DIR}/${id}.sam
+        echo "Alignment completed for ${id}."
+    else
+        echo "Missing files for ${id}, skipping..."
+    fi
+done
+
+echo "All samples processed!"
+##——————vim编辑器内容结束——————
+chmod +x aligned.sh
+bash aligned.sh
+
+#BAM转换
+vim process_bam.sh
+## ——————vim编辑器内容—————— 
+#!/bin/bash
+
+# === 配置部分 ===
+WORK_DIR="/media/sf_share/NS5"          # 主目录
+ALIGNED_DIR="${WORK_DIR}/aligned"       # 比对结果目录（存放 SAM 文件）
+PROCESSED_DIR="${WORK_DIR}/processed"   # 处理后的 BAM 文件目录
+THREADS=8                               # 并行线程数
+CONDA_ENV="bioinformatics"              # Conda 环境名称
+
+# === 激活 Conda 环境 ===
+echo "Activating Conda environment: ${CONDA_ENV}"
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate ${CONDA_ENV}
+
+# === 创建输出目录 ===
+mkdir -p ${PROCESSED_DIR}
+
+echo "=== 开始处理 SAM 文件 ==="
+
+# 遍历所有 SAM 文件并进行转换和排序
+for sam_file in ${ALIGNED_DIR}/*.sam; do
+    # 提取样本ID
+    sample_id=$(basename ${sam_file} .sam)
+    echo "Processing ${sample_id}..."
+
+    # 定义中间和输出文件路径
+    bam_file="${PROCESSED_DIR}/${sample_id}.bam"
+    sorted_bam_file="${PROCESSED_DIR}/${sample_id}.sorted.bam"
+
+    # Step 1: 将 SAM 转换为 BAM
+    echo "Converting SAM to BAM for ${sample_id}..."
+    samtools view -@ ${THREADS} -S -b ${sam_file} -o ${bam_file}
+
+    # Step 2: 对 BAM 文件进行排序
+    echo "Sorting BAM file for ${sample_id}..."
+    samtools sort -@ ${THREADS} -o ${sorted_bam_file} ${bam_file}
+
+    # Step 3: 删除中间 BAM 文件（可选）
+    rm -f ${bam_file}
+    echo "Completed processing ${sample_id}. Output: ${sorted_bam_file}"
+done
+
+echo "=== 所有 SAM 文件处理完成 ==="
+chmod +x process_bam.sh
+bash process_bam.sh
+
+
+#featureCounts
+vim run_featureCounts.sh
+## ——————vim编辑器内容——————
+#!/bin/bash
+
+# === 配置部分 ===
+WORK_DIR="/media/sf_share/NS5"                      # 主目录
+BAM_DIR="${WORK_DIR}/processed"                    # 存放排序后的 BAM 文件目录
+GTF_FILE="/media/sf_share/index/gtf/GCF_000001405.38_GRCh38.p12_genomic.gtf.gz"  # 参考基因组的 GTF 文件路径
+OUTPUT_DIR="${WORK_DIR}/counts"                    # 输出目录
+THREADS=8                                          # 并行线程数
+CONDA_ENV="bioinformatics"                         # Conda 环境名称
+
+# === 激活 Conda 环境 ===
+echo "Activating Conda environment: ${CONDA_ENV}"
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate ${CONDA_ENV}
+
+# === 创建输出目录 ===
+mkdir -p ${OUTPUT_DIR}
+
+# === 运行 featureCounts ===
+echo "Starting featureCounts for gene expression quantification..."
+
+featureCounts -T ${THREADS} -a ${GTF_FILE} -o ${OUTPUT_DIR}/gene_counts.txt \
+    ${BAM_DIR}/*.sorted.bam
+
+echo "featureCounts completed! Results saved to: ${OUTPUT_DIR}/gene_counts.txt"
+##——————vim编辑器内容结束——————
+
+chmod +x run_featureCounts.sh
+run_featureCounts.sh
+
